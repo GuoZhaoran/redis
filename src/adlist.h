@@ -44,6 +44,12 @@ typedef struct listIter {
     int direction;
 } listIter;
 
+typedef struct listConcurrentIter {
+    listNode *next;
+    int direction;
+    int token;
+} listConcurrentIter;
+
 typedef struct list {
     listNode *head;
     listNode *tail;
@@ -78,13 +84,17 @@ list *listAddNodeTail(list *list, void *value);
 list *listInsertNode(list *list, listNode *old_node, void *value, int after);
 void listDelNode(list *list, listNode *node);
 listIter *listGetIterator(list *list, int direction);
+listConcurrentIter *listGetConcurrentIterator(list *list, int direction);
 listNode *listNext(listIter *iter);
+listNode *listConcurrentNext(listConcurrentIter *iter);
 void listReleaseIterator(listIter *iter);
 list *listDup(list *orig);
 listNode *listSearchKey(list *list, void *key);
 listNode *listIndex(list *list, long index);
 void listRewind(list *list, listIter *li);
 void listRewindTail(list *list, listIter *li);
+void listRewindConcurrentIterator(list *list, listConcurrentIter *iter);
+void listRewindTailConcurrentIterator(list *list, listConcurrentIter *iter);
 void listRotateTailToHead(list *list);
 void listRotateHeadToTail(list *list);
 void listJoin(list *l, list *o);
@@ -92,5 +102,9 @@ void listJoin(list *l, list *o);
 /* Directions for iterators */
 #define AL_START_HEAD 0
 #define AL_START_TAIL 1
+
+/* List concurrent iterator hold token status */
+#define AL_ITER_NOT_HELD_TOKEN 0
+#define AL_ITER_HOLD_TOKEN 1
 
 #endif /* __ADLIST_H__ */

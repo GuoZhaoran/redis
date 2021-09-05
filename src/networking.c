@@ -3421,25 +3421,26 @@ void processEventsWhileBlocked(void) {
 #define IO_THREADS_MAX_NUM 128
 #define IO_THREADS_OP_READ 0
 #define IO_THREADS_OP_WRITE 1
+#define IO_THREADS_STATUS_OUT 0
+#define IO_THREADS_STATUS_IN 1
 
 pthread_t io_threads[IO_THREADS_MAX_NUM];
 pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
-redisAtomic unsigned long io_threads_pending[IO_THREADS_MAX_NUM];
+redisAtomic int io_threads_working_status[IO_THREADS_MAX_NUM]; /* IO_THREADS_STATUS_IN or IO_THREADS_STATUS_OUT. */
 int io_threads_op;      /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
 
-/* This is the list of clients each thread will serve when threaded I/O is
- * used. We spawn io_threads_num-1 threads, since one is the main thread
- * itself. */
-list *io_threads_list[IO_THREADS_MAX_NUM];
-
-static inline unsigned long getIOPendingCount(int i) {
-    unsigned long count = 0;
-    atomicGetWithSync(io_threads_pending[i], count);
-    return count;
+static inline int getIOWorkingStatus(int i) {
+    int status = IO_THREADS_STATUS_OUT;
+    atomicGetWithSync(io_threads_working_status[i], status);
+    return status;
 }
 
-static inline void setIOPendingCount(int i, unsigned long count) {
-    atomicSetWithSync(io_threads_pending[i], count);
+static inline void setIOWorkingStatusIn(int i) {
+    atomicSetWithSync(io_threads_working_status[i], IO_THREADS_STATUS_IN);
+}
+
+static inline void setIOWorkingStatusOut(int i) {
+    atomicSetWithSync(io_threads_working_status[i], IO_THREADS_STATUS_OUT);
 }
 
 void *IOThreadMain(void *myid) {
@@ -3456,24 +3457,24 @@ void *IOThreadMain(void *myid) {
     while(1) {
         /* Wait for start */
         for (int j = 0; j < 1000000; j++) {
-            if (getIOPendingCount(id) != 0) break;
+            if (getIOWorkingStatus(id) == IO_THREADS_STATUS_IN) break;
         }
 
         /* Give the main thread a chance to stop this thread. */
-        if (getIOPendingCount(id) == 0) {
+        if (getIOWorkingStatus(id) == IO_THREADS_STATUS_OUT) {
             pthread_mutex_lock(&io_threads_mutex[id]);
             pthread_mutex_unlock(&io_threads_mutex[id]);
             continue;
         }
 
-        serverAssert(getIOPendingCount(id) != 0);
+        serverAssert(getIOWorkingStatus(id) != IO_THREADS_STATUS_OUT);
 
-        /* Process: note that the main thread will never touch our list
-         * before we drop the pending count to 0. */
-        listIter li;
+        /**The main thread and other I/O threads will compete for work task execution,
+         * but they will not process the same listNode. As the saying goes, those who
+         * can do more work.
+         */
         listNode *ln;
-        listRewind(io_threads_list[id],&li);
-        while((ln = listNext(&li))) {
+        while((ln = listConcurrentNext(server.clients_pending_iter))) {
             client *c = listNodeValue(ln);
             if (io_threads_op == IO_THREADS_OP_WRITE) {
                 writeToClient(c,0);
@@ -3483,8 +3484,8 @@ void *IOThreadMain(void *myid) {
                 serverPanic("io_threads_op value is unknown");
             }
         }
-        listEmpty(io_threads_list[id]);
-        setIOPendingCount(id, 0);
+        setIOWorkingStatusOut(id);
+        atomicDecr(server.io_threads_in_working,1);
     }
 }
 
@@ -3503,15 +3504,10 @@ void initThreadedIO(void) {
     }
 
     /* Spawn and initialize the I/O threads. */
-    for (int i = 0; i < server.io_threads_num; i++) {
-        /* Things we do for all the threads including the main thread. */
-        io_threads_list[i] = listCreate();
-        if (i == 0) continue; /* Thread 0 is the main thread. */
-
+    for (int i = 1; i < server.io_threads_num; i++) {
         /* Things we do only for the additional threads. */
         pthread_t tid;
         pthread_mutex_init(&io_threads_mutex[i],NULL);
-        setIOPendingCount(i, 0);
         pthread_mutex_lock(&io_threads_mutex[i]); /* Thread will be stopped. */
         if (pthread_create(&tid,NULL,IOThreadMain,(void*)(long)i) != 0) {
             serverLog(LL_WARNING,"Fatal: Can't initialize IO thread.");
@@ -3595,7 +3591,6 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     listIter li;
     listNode *ln;
     listRewind(server.clients_pending_write,&li);
-    int item_id = 0;
     while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
@@ -3606,33 +3601,28 @@ int handleClientsWithPendingWritesUsingThreads(void) {
             listDelNode(server.clients_pending_write, ln);
             continue;
         }
-
-        int target_id = item_id % server.io_threads_num;
-        listAddNodeTail(io_threads_list[target_id],c);
-        item_id++;
     }
 
-    /* Give the start condition to the waiting threads, by setting the
-     * start condition atomic var. */
+    /* Atomicity sets the number of worker threads, and the main thread and
+     * I/O threads are notified when they have finished their work. */
+    atomicSet(server.io_threads_in_working, server.io_threads_num);
+    listRewindConcurrentIterator(server.clients_pending_write, server.clients_pending_iter);
     io_threads_op = IO_THREADS_OP_WRITE;
     for (int j = 1; j < server.io_threads_num; j++) {
-        int count = listLength(io_threads_list[j]);
-        setIOPendingCount(j, count);
+        setIOWorkingStatusIn(j);
     }
 
-    /* Also use the main thread to process a slice of clients. */
-    listRewind(io_threads_list[0],&li);
-    while((ln = listNext(&li))) {
+    /* Also use the main thread to Competition processing clients tasks. */
+    while((ln = listConcurrentNext(server.clients_pending_iter))) {
         client *c = listNodeValue(ln);
-        writeToClient(c,0);
+        writeToClient(c->conn,0);
     }
-    listEmpty(io_threads_list[0]);
+    atomicDecr(server.io_threads_in_working,1);
 
     /* Wait for all the other threads to end their work. */
+    unsigned int pending = 0;
     while(1) {
-        unsigned long pending = 0;
-        for (int j = 1; j < server.io_threads_num; j++)
-            pending += getIOPendingCount(j);
+        atomicGet(server.io_threads_in_working, pending);
         if (pending == 0) break;
     }
 
@@ -3687,39 +3677,27 @@ int handleClientsWithPendingReadsUsingThreads(void) {
     int processed = listLength(server.clients_pending_read);
     if (processed == 0) return 0;
 
-    /* Distribute the clients across N different lists. */
-    listIter li;
-    listNode *ln;
-    listRewind(server.clients_pending_read,&li);
-    int item_id = 0;
-    while((ln = listNext(&li))) {
-        client *c = listNodeValue(ln);
-        int target_id = item_id % server.io_threads_num;
-        listAddNodeTail(io_threads_list[target_id],c);
-        item_id++;
-    }
-
-    /* Give the start condition to the waiting threads, by setting the
-     * start condition atomic var. */
+    /* Atomicity sets the number of worker threads, and the main thread and
+     * I/O threads are notified when they have finished their work. */
+    atomicSet(server.io_threads_in_working, server.io_threads_num);
+    listRewindConcurrentIterator(server.clients_pending_read, server.clients_pending_iter);
     io_threads_op = IO_THREADS_OP_READ;
     for (int j = 1; j < server.io_threads_num; j++) {
-        int count = listLength(io_threads_list[j]);
-        setIOPendingCount(j, count);
+        setIOWorkingStatusIn(j);
     }
 
-    /* Also use the main thread to process a slice of clients. */
-    listRewind(io_threads_list[0],&li);
-    while((ln = listNext(&li))) {
+    /* Also use the main thread to Competition processing clients tasks. */
+    listNode *ln;
+    while((ln = listConcurrentNext(server.clients_pending_iter))) {
         client *c = listNodeValue(ln);
         readQueryFromClient(c->conn);
     }
-    listEmpty(io_threads_list[0]);
+    atomicDecr(server.io_threads_in_working,1);
 
     /* Wait for all the other threads to end their work. */
+    unsigned int pending = 0;
     while(1) {
-        unsigned long pending = 0;
-        for (int j = 1; j < server.io_threads_num; j++)
-            pending += getIOPendingCount(j);
+        atomicGet(server.io_threads_in_working, pending);
         if (pending == 0) break;
     }
 

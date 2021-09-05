@@ -31,6 +31,7 @@
 
 #include <stdlib.h>
 #include "adlist.h"
+#include "atomicvar.h"
 #include "zmalloc.h"
 
 /* Create a new list. The created list can be freed with
@@ -197,6 +198,25 @@ listIter *listGetIterator(list *list, int direction)
     return iter;
 }
 
+/* Returns a list concurrent iterator 'iter'. After the initialization
+ * multiple threads every call to listConcurrentNext() will return the
+ * next element of the list.
+ *
+ * This function can't fail. */
+listConcurrentIter *listGetConcurrentIterator(list *list, int direction)
+{
+    listConcurrentIter *iter;
+
+    if ((iter = zmalloc(sizeof(*iter))) == NULL) return NULL;
+    if (direction == AL_START_HEAD)
+        iter->next = list->head;
+    else
+        iter->next = list->tail;
+    iter->direction = direction;
+    iter->token = AL_ITER_NOT_HELD_TOKEN;
+    return iter;
+}
+
 /* Release the iterator memory */
 void listReleaseIterator(listIter *iter) {
     zfree(iter);
@@ -211,6 +231,19 @@ void listRewind(list *list, listIter *li) {
 void listRewindTail(list *list, listIter *li) {
     li->next = list->tail;
     li->direction = AL_START_TAIL;
+}
+
+/* Create an concurrent iterator in the list private iterator structure */
+void listRewindConcurrentIterator(list *list, listConcurrentIter *li) {
+    li->next = list->head;
+    li->direction = AL_START_HEAD;
+    li->token = AL_ITER_NOT_HELD_TOKEN;
+}
+
+void listRewindTailConcurrentIterator(list *list, listConcurrentIter *li) {
+    li->next = list->tail;
+    li->direction = AL_START_TAIL;
+    li->token = AL_ITER_NOT_HELD_TOKEN;
 }
 
 /* Return the next element of an iterator.
@@ -237,6 +270,57 @@ listNode *listNext(listIter *iter)
         else
             iter->next = current->prev;
     }
+    return current;
+}
+
+/* Acquire iterator token.
+ * List concurrent iterator must acquire token to get list next node.
+ *
+ * Don't forget to release the token in order for other threads
+ * get it as well.
+ *
+ * */
+static inline void acquireIterToken(listConcurrentIter *iter) {
+    atomicSetWithSync(iter->token, AL_ITER_HOLD_TOKEN);
+}
+
+/* Release iterator token.
+ * After list concurrent iterator gets the results, it needs to call this
+ * function to release the token.
+ *
+ * Even if the call to the listConcurrentNext function returns NULL, the
+ * token should be released as well.
+ *
+ * */
+static inline void releaseIterToken(listConcurrentIter *iter) {
+    atomicSetWithSync(iter->token, AL_ITER_NOT_HELD_TOKEN);
+}
+
+/* Return the next element of an iterator.
+ *
+ * This method is useful when there are many threads getting elements from
+ * the chain table. Always remember that when a thread gets its own element,
+ * it is better to just read it and if you have to perform a change operation,
+ * make sure that the other threads do not make any changes to it.
+ *
+ * iter = listGetConcurrentIterator(list,<direction>);
+ * while ((node = listConcurrentNext(iter)) != NULL) {
+ *     doSomethingWith(listNodeValue(node));
+ * }
+ *
+ * */
+listNode *listConcurrentNext(listConcurrentIter *iter)
+{
+    acquireIterToken(iter);
+    listNode *current = iter->next;
+
+    if (current != NULL) {
+        if (iter->direction == AL_START_HEAD)
+            iter->next = current->next;
+        else
+            iter->next = current->prev;
+    }
+    releaseIterToken(iter);
     return current;
 }
 
@@ -272,7 +356,7 @@ list *listDup(list *orig)
         } else {
             value = node->value;
         }
-        
+
         if (listAddNodeTail(copy, value) == NULL) {
             /* Free value if dup succeed but listAddNodeTail failed. */
             if (copy->free) copy->free(value);
