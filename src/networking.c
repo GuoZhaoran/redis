@@ -3615,7 +3615,7 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     /* Also use the main thread to Competition processing clients tasks. */
     while((ln = listConcurrentNext(server.clients_pending_iter))) {
         client *c = listNodeValue(ln);
-        writeToClient(c->conn,0);
+        writeToClient(c,0);
     }
     atomicDecr(server.io_threads_in_working,1);
 

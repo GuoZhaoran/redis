@@ -27,6 +27,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+#include "atomicvar.h"
 
 #ifndef __ADLIST_H__
 #define __ADLIST_H__
@@ -47,7 +48,7 @@ typedef struct listIter {
 typedef struct listConcurrentIter {
     listNode *next;
     int direction;
-    int token;
+    redisAtomic int token;
 } listConcurrentIter;
 
 typedef struct list {
@@ -102,9 +103,5 @@ void listJoin(list *l, list *o);
 /* Directions for iterators */
 #define AL_START_HEAD 0
 #define AL_START_TAIL 1
-
-/* List concurrent iterator hold token status */
-#define AL_ITER_NOT_HELD_TOKEN 0
-#define AL_ITER_HOLD_TOKEN 1
 
 #endif /* __ADLIST_H__ */

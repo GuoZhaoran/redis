@@ -10,6 +10,8 @@
  * atomicSet(var,value)  -- Set the atomic counter value
  * atomicGetWithSync(var,value)  -- 'atomicGet' with inter-thread synchronization
  * atomicSetWithSync(var,value)  -- 'atomicSet' with inter-thread synchronization
+ * atomicCompareAndSwap(var, expected, value, result) -- 'atomicCAS' will try once
+ * swap, result variables will marking success or result
  *
  * Never use return value from the macros, instead use the AtomicGetIncr()
  * if you need to get the current value and increment it atomically, like
@@ -101,8 +103,11 @@
 #define atomicGetWithSync(var,dstvar) do { \
     dstvar = atomic_load_explicit(&var,memory_order_seq_cst); \
 } while(0)
-#define atomicSetWithSync(var,value) \
-    atomic_store_explicit(&var,value,memory_order_seq_cst)
+#define atomicSetWithSync(var,value) atomic_store_explicit(&var,value,memory_order_seq_cst)
+#define atomicCompareAndSwap(var,expected,value,result) do { \
+    result = atomic_compare_exchange_weak_explicit(&var,&expected,value,memory_order_seq_cst, \
+    memory_order_seq_cst); \
+} while(0)
 #define REDIS_ATOMIC_API "c11-builtin"
 
 #elif !defined(__ATOMIC_VAR_FORCE_SYNC_MACROS) && \
@@ -122,8 +127,10 @@
 #define atomicGetWithSync(var,dstvar) do { \
     dstvar = __atomic_load_n(&var,__ATOMIC_SEQ_CST); \
 } while(0)
-#define atomicSetWithSync(var,value) \
-    __atomic_store_n(&var,value,__ATOMIC_SEQ_CST)
+#define atomicSetWithSync(var,value) __atomic_store_n(&var,value,__ATOMIC_SEQ_CST)
+#define atomicCompareAndSwap(var,expected,value,result) do { \
+     result = __atomic_compare_exchange_n(var,&expected,value,true,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); \
+} while(0)
 #define REDIS_ATOMIC_API "atomic-builtin"
 
 #elif defined(HAVE_ATOMIC)
@@ -148,6 +155,10 @@
 #define atomicSetWithSync(var,value) do { \
     ANNOTATE_HAPPENS_BEFORE(&var);  \
     while(!__sync_bool_compare_and_swap(&var,var,value,__sync_synchronize)); \
+} while(0)
+#define atomicCompareAndSwap(var,expected,value,result) do { \
+    ANNOTATE_HAPPENS_BEFORE(&var);  \
+    result = __sync_bool_compare_and_swap(&var,expected,value,__sync_synchronize); \
 } while(0)
 #define REDIS_ATOMIC_API "sync-builtin"
 

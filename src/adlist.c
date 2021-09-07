@@ -213,7 +213,7 @@ listConcurrentIter *listGetConcurrentIterator(list *list, int direction)
     else
         iter->next = list->tail;
     iter->direction = direction;
-    iter->token = AL_ITER_NOT_HELD_TOKEN;
+    atomicSetWithSync(iter->token, 0);
     return iter;
 }
 
@@ -237,13 +237,13 @@ void listRewindTail(list *list, listIter *li) {
 void listRewindConcurrentIterator(list *list, listConcurrentIter *li) {
     li->next = list->head;
     li->direction = AL_START_HEAD;
-    li->token = AL_ITER_NOT_HELD_TOKEN;
+    atomicSetWithSync(li->token, 0);
 }
 
 void listRewindTailConcurrentIterator(list *list, listConcurrentIter *li) {
     li->next = list->tail;
     li->direction = AL_START_TAIL;
-    li->token = AL_ITER_NOT_HELD_TOKEN;
+    atomicSetWithSync(li->token, 0);
 }
 
 /* Return the next element of an iterator.
@@ -273,27 +273,10 @@ listNode *listNext(listIter *iter)
     return current;
 }
 
-/* Acquire iterator token.
- * List concurrent iterator must acquire token to get list next node.
- *
- * Don't forget to release the token in order for other threads
- * get it as well.
- *
- * */
-static inline void acquireIterToken(listConcurrentIter *iter) {
-    atomicSetWithSync(iter->token, AL_ITER_HOLD_TOKEN);
-}
-
-/* Release iterator token.
- * After list concurrent iterator gets the results, it needs to call this
- * function to release the token.
- *
- * Even if the call to the listConcurrentNext function returns NULL, the
- * token should be released as well.
- *
- * */
-static inline void releaseIterToken(listConcurrentIter *iter) {
-    atomicSetWithSync(iter->token, AL_ITER_NOT_HELD_TOKEN);
+static inline int compareAndSwapToken(listConcurrentIter *iter, int expected) {
+    int result;
+    atomicCompareAndSwap(iter->token, expected, 1, result);
+    return result;
 }
 
 /* Return the next element of an iterator.
@@ -311,16 +294,19 @@ static inline void releaseIterToken(listConcurrentIter *iter) {
  * */
 listNode *listConcurrentNext(listConcurrentIter *iter)
 {
-    acquireIterToken(iter);
-    listNode *current = iter->next;
+    int result = 0;
+    do {
+        result = compareAndSwapToken(iter, 0);
+    } while(!result);
 
+    listNode *current = iter->next;
     if (current != NULL) {
         if (iter->direction == AL_START_HEAD)
             iter->next = current->next;
         else
             iter->next = current->prev;
     }
-    releaseIterToken(iter);
+    atomicSetWithSync(iter->token, 0);
     return current;
 }
 
