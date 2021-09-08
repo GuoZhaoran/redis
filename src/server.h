@@ -35,6 +35,7 @@
 #include "solarisfixes.h"
 #include "rio.h"
 #include "atomicvar.h"
+#include "spinlock.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1276,7 +1277,8 @@ struct redisServer {
     list *clients_to_close;     /* Clients to close asynchronously */
     list *clients_pending_write; /* There is to write or install handler. */
     list *clients_pending_read;  /* Client has pending read socket buffers. */
-    listConcurrentIter *clients_pending_iter;   /* Client pending list concurrent iterator. */
+    spinlock *clients_pending_spinlock; /* I/O threads use it to get Client's read or write task. */
+    listIter *clients_pending_iter; /* clients_pending_write or clients_pending_write list iterator. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client;     /* Current client executing the command. */
     rax *clients_timeout_table; /* Radix tree for blocked clients timeouts. */

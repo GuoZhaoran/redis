@@ -27,7 +27,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#include "atomicvar.h"
+#include "spinlock.h"
 
 #ifndef __ADLIST_H__
 #define __ADLIST_H__
@@ -44,12 +44,6 @@ typedef struct listIter {
     listNode *next;
     int direction;
 } listIter;
-
-typedef struct listConcurrentIter {
-    listNode *next;
-    int direction;
-    redisAtomic int token;
-} listConcurrentIter;
 
 typedef struct list {
     listNode *head;
@@ -85,17 +79,14 @@ list *listAddNodeTail(list *list, void *value);
 list *listInsertNode(list *list, listNode *old_node, void *value, int after);
 void listDelNode(list *list, listNode *node);
 listIter *listGetIterator(list *list, int direction);
-listConcurrentIter *listGetConcurrentIterator(list *list, int direction);
 listNode *listNext(listIter *iter);
-listNode *listConcurrentNext(listConcurrentIter *iter);
+listNode *listConcurrentNext(listIter *iter, spinlock *spinlock);
 void listReleaseIterator(listIter *iter);
 list *listDup(list *orig);
 listNode *listSearchKey(list *list, void *key);
 listNode *listIndex(list *list, long index);
 void listRewind(list *list, listIter *li);
 void listRewindTail(list *list, listIter *li);
-void listRewindConcurrentIterator(list *list, listConcurrentIter *iter);
-void listRewindTailConcurrentIterator(list *list, listConcurrentIter *iter);
 void listRotateTailToHead(list *list);
 void listRotateHeadToTail(list *list);
 void listJoin(list *l, list *o);

@@ -3474,7 +3474,7 @@ void *IOThreadMain(void *myid) {
          * can do more work.
          */
         listNode *ln;
-        while((ln = listConcurrentNext(server.clients_pending_iter))) {
+        while((ln = listConcurrentNext(server.clients_pending_iter,server.clients_pending_spinlock))) {
             client *c = listNodeValue(ln);
             if (io_threads_op == IO_THREADS_OP_WRITE) {
                 writeToClient(c,0);
@@ -3588,10 +3588,9 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     if (!server.io_threads_active) startThreadedIO();
 
     /* Distribute the clients across N different lists. */
-    listIter li;
     listNode *ln;
-    listRewind(server.clients_pending_write,&li);
-    while((ln = listNext(&li))) {
+    listRewind(server.clients_pending_write,server.clients_pending_iter);
+    while((ln = listNext(server.clients_pending_iter))) {
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
 
@@ -3606,14 +3605,14 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     /* Atomicity sets the number of worker threads, and the main thread and
      * I/O threads are notified when they have finished their work. */
     atomicSet(server.io_threads_in_working, server.io_threads_num);
-    listRewindConcurrentIterator(server.clients_pending_write, server.clients_pending_iter);
+    listRewind(server.clients_pending_write, server.clients_pending_iter);
     io_threads_op = IO_THREADS_OP_WRITE;
     for (int j = 1; j < server.io_threads_num; j++) {
         setIOWorkingStatusIn(j);
     }
 
     /* Also use the main thread to Competition processing clients tasks. */
-    while((ln = listConcurrentNext(server.clients_pending_iter))) {
+    while((ln = listConcurrentNext(server.clients_pending_iter, server.clients_pending_spinlock))) {
         client *c = listNodeValue(ln);
         writeToClient(c,0);
     }
@@ -3628,8 +3627,8 @@ int handleClientsWithPendingWritesUsingThreads(void) {
 
     /* Run the list of clients again to install the write handler where
      * needed. */
-    listRewind(server.clients_pending_write,&li);
-    while((ln = listNext(&li))) {
+    listRewind(server.clients_pending_write,server.clients_pending_iter);
+    while((ln = listNext(server.clients_pending_iter))) {
         client *c = listNodeValue(ln);
 
         /* Install the write handler if there are pending writes in some
@@ -3680,7 +3679,6 @@ int handleClientsWithPendingReadsUsingThreads(void) {
     /* Atomicity sets the number of worker threads, and the main thread and
      * I/O threads are notified when they have finished their work. */
     atomicSet(server.io_threads_in_working, server.io_threads_num);
-    listRewindConcurrentIterator(server.clients_pending_read, server.clients_pending_iter);
     io_threads_op = IO_THREADS_OP_READ;
     for (int j = 1; j < server.io_threads_num; j++) {
         setIOWorkingStatusIn(j);
@@ -3688,7 +3686,8 @@ int handleClientsWithPendingReadsUsingThreads(void) {
 
     /* Also use the main thread to Competition processing clients tasks. */
     listNode *ln;
-    while((ln = listConcurrentNext(server.clients_pending_iter))) {
+    listRewind(server.clients_pending_read,server.clients_pending_iter);
+    while((ln = listConcurrentNext(server.clients_pending_iter, server.clients_pending_spinlock))) {
         client *c = listNodeValue(ln);
         readQueryFromClient(c->conn);
     }

@@ -31,7 +31,6 @@
 
 #include <stdlib.h>
 #include "adlist.h"
-#include "atomicvar.h"
 #include "zmalloc.h"
 
 /* Create a new list. The created list can be freed with
@@ -198,25 +197,6 @@ listIter *listGetIterator(list *list, int direction)
     return iter;
 }
 
-/* Returns a list concurrent iterator 'iter'. After the initialization
- * multiple threads every call to listConcurrentNext() will return the
- * next element of the list.
- *
- * This function can't fail. */
-listConcurrentIter *listGetConcurrentIterator(list *list, int direction)
-{
-    listConcurrentIter *iter;
-
-    if ((iter = zmalloc(sizeof(*iter))) == NULL) return NULL;
-    if (direction == AL_START_HEAD)
-        iter->next = list->head;
-    else
-        iter->next = list->tail;
-    iter->direction = direction;
-    atomicSetWithSync(iter->token, 0);
-    return iter;
-}
-
 /* Release the iterator memory */
 void listReleaseIterator(listIter *iter) {
     zfree(iter);
@@ -231,19 +211,6 @@ void listRewind(list *list, listIter *li) {
 void listRewindTail(list *list, listIter *li) {
     li->next = list->tail;
     li->direction = AL_START_TAIL;
-}
-
-/* Create an concurrent iterator in the list private iterator structure */
-void listRewindConcurrentIterator(list *list, listConcurrentIter *li) {
-    li->next = list->head;
-    li->direction = AL_START_HEAD;
-    atomicSetWithSync(li->token, 0);
-}
-
-void listRewindTailConcurrentIterator(list *list, listConcurrentIter *li) {
-    li->next = list->tail;
-    li->direction = AL_START_TAIL;
-    atomicSetWithSync(li->token, 0);
 }
 
 /* Return the next element of an iterator.
@@ -273,40 +240,28 @@ listNode *listNext(listIter *iter)
     return current;
 }
 
-static inline int compareAndSwapToken(listConcurrentIter *iter, int expected) {
-    int result;
-    atomicCompareAndSwap(iter->token, expected, 1, result);
-    return result;
-}
-
 /* Return the next element of an iterator.
+ * It guarantees that only one of the multiple threads will fetch
+ * the element, make sure that any action you take on the fetch
+ * element does not affect others.
  *
- * This method is useful when there are many threads getting elements from
- * the chain table. Always remember that when a thread gets its own element,
- * it is better to just read it and if you have to perform a change operation,
- * make sure that the other threads do not make any changes to it.
+ * The function returns a pointer to the next element of the list,
+ * or NULL if there are no more elements, so the classical usage
+ * pattern is:
  *
- * iter = listGetConcurrentIterator(list,<direction>);
+ * iter = listGetIterator(list,<direction>);
  * while ((node = listConcurrentNext(iter)) != NULL) {
+ *     // make sure that any action you take on the fetch element
+ *     // does not affect others!
  *     doSomethingWith(listNodeValue(node));
  * }
  *
  * */
-listNode *listConcurrentNext(listConcurrentIter *iter)
+listNode *listConcurrentNext(listIter *iter, spinlock *spinlock)
 {
-    int result = 0;
-    do {
-        result = compareAndSwapToken(iter, 0);
-    } while(!result);
-
-    listNode *current = iter->next;
-    if (current != NULL) {
-        if (iter->direction == AL_START_HEAD)
-            iter->next = current->next;
-        else
-            iter->next = current->prev;
-    }
-    atomicSetWithSync(iter->token, 0);
+    lock(spinlock);
+    listNode *current = listNext(iter);
+    unlock(spinlock);
     return current;
 }
 
