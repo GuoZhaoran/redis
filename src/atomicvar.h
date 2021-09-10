@@ -129,7 +129,7 @@
 } while(0)
 #define atomicSetWithSync(var,value) __atomic_store_n(&var,value,__ATOMIC_SEQ_CST)
 #define atomicCompareAndSwap(var,expected,value,result) do { \
-     result = __atomic_compare_exchange_n(var,&expected,value,true,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); \
+     result = __atomic_compare_exchange_n(&var,&expected,value,true,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST); \
 } while(0)
 #define REDIS_ATOMIC_API "atomic-builtin"
 
