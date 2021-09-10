@@ -1278,7 +1278,7 @@ struct redisServer {
     list *clients_pending_write; /* There is to write or install handler. */
     list *clients_pending_read;  /* Client has pending read socket buffers. */
     spinlock *clients_pending_spinlock; /* I/O threads use it to get Client's read or write task. */
-    listIter *clients_pending_iter; /* clients_pending_write or clients_pending_write list iterator. */
+    listIter *clients_pending_iter; /* clients_pending_read or clients_pending_write list iterator. */
     list *slaves, *monitors;    /* List of slaves and MONITORs */
     client *current_client;     /* Current client executing the command. */
     rax *clients_timeout_table; /* Radix tree for blocked clients timeouts. */

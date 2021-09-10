@@ -61,5 +61,5 @@ void lock(spinlock *spinlock) {
 
 /* unlock: Set atomic variables to locked status */
 void unlock(spinlock *spinlock) {
-    atomicSetWithSync(spinlock->status, SPINLOCK_LOCKED);
+    atomicSetWithSync(spinlock->status, SPINLOCK_UNLOCKED);
 }

@@ -3419,28 +3419,26 @@ void processEventsWhileBlocked(void) {
  * ========================================================================== */
 
 #define IO_THREADS_MAX_NUM 128
+/*  Operation type flags for io threads. */
 #define IO_THREADS_OP_READ 0
 #define IO_THREADS_OP_WRITE 1
-#define IO_THREADS_STATUS_OUT 0
-#define IO_THREADS_STATUS_IN 1
+/* IO thread is working or not flag. */
+#define IO_THREADS_ENDING_WORK 0
+#define IO_THREADS_START_WORKING 1
 
 pthread_t io_threads[IO_THREADS_MAX_NUM];
 pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
-redisAtomic int io_threads_working_status[IO_THREADS_MAX_NUM]; /* IO_THREADS_STATUS_IN or IO_THREADS_STATUS_OUT. */
+redisAtomic int io_threads_working_status[IO_THREADS_MAX_NUM];
 int io_threads_op;      /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
 
 static inline int getIOWorkingStatus(int i) {
-    int status = IO_THREADS_STATUS_OUT;
+    int status = IO_THREADS_ENDING_WORK;
     atomicGetWithSync(io_threads_working_status[i], status);
     return status;
 }
 
-static inline void setIOWorkingStatusIn(int i) {
-    atomicSetWithSync(io_threads_working_status[i], IO_THREADS_STATUS_IN);
-}
-
-static inline void setIOWorkingStatusOut(int i) {
-    atomicSetWithSync(io_threads_working_status[i], IO_THREADS_STATUS_OUT);
+static inline void setIOWorkingStatus(int i, int status) {
+    atomicSetWithSync(io_threads_working_status[i], status);
 }
 
 void *IOThreadMain(void *myid) {
@@ -3457,17 +3455,17 @@ void *IOThreadMain(void *myid) {
     while(1) {
         /* Wait for start */
         for (int j = 0; j < 1000000; j++) {
-            if (getIOWorkingStatus(id) == IO_THREADS_STATUS_IN) break;
+            if (getIOWorkingStatus(id) == IO_THREADS_START_WORKING) break;
         }
 
         /* Give the main thread a chance to stop this thread. */
-        if (getIOWorkingStatus(id) == IO_THREADS_STATUS_OUT) {
+        if (getIOWorkingStatus(id) == IO_THREADS_ENDING_WORK) {
             pthread_mutex_lock(&io_threads_mutex[id]);
             pthread_mutex_unlock(&io_threads_mutex[id]);
             continue;
         }
 
-        serverAssert(getIOWorkingStatus(id) != IO_THREADS_STATUS_OUT);
+        serverAssert(getIOWorkingStatus(id) == IO_THREADS_START_WORKING);
 
         /**The main thread and other I/O threads will compete for work task execution,
          * but they will not process the same listNode. As the saying goes, those who
@@ -3484,7 +3482,7 @@ void *IOThreadMain(void *myid) {
                 serverPanic("io_threads_op value is unknown");
             }
         }
-        setIOWorkingStatusOut(id);
+        setIOWorkingStatus(id, IO_THREADS_ENDING_WORK);
         atomicDecr(server.io_threads_in_working,1);
     }
 }
@@ -3588,9 +3586,10 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     if (!server.io_threads_active) startThreadedIO();
 
     /* Distribute the clients across N different lists. */
+    listIter li;
     listNode *ln;
-    listRewind(server.clients_pending_write,server.clients_pending_iter);
-    while((ln = listNext(server.clients_pending_iter))) {
+    listRewind(server.clients_pending_write,&li);
+    while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
         c->flags &= ~CLIENT_PENDING_WRITE;
 
@@ -3605,10 +3604,10 @@ int handleClientsWithPendingWritesUsingThreads(void) {
     /* Atomicity sets the number of worker threads, and the main thread and
      * I/O threads are notified when they have finished their work. */
     atomicSet(server.io_threads_in_working, server.io_threads_num);
-    listRewind(server.clients_pending_write, server.clients_pending_iter);
+    server.clients_pending_iter = listGetIterator(server.clients_pending_write, AL_START_HEAD);
     io_threads_op = IO_THREADS_OP_WRITE;
     for (int j = 1; j < server.io_threads_num; j++) {
-        setIOWorkingStatusIn(j);
+        setIOWorkingStatus(j, IO_THREADS_START_WORKING);
     }
 
     /* Also use the main thread to Competition processing clients tasks. */
@@ -3624,11 +3623,12 @@ int handleClientsWithPendingWritesUsingThreads(void) {
         atomicGet(server.io_threads_in_working, pending);
         if (pending == 0) break;
     }
+    listReleaseIterator(server.clients_pending_iter);
 
     /* Run the list of clients again to install the write handler where
      * needed. */
-    listRewind(server.clients_pending_write,server.clients_pending_iter);
-    while((ln = listNext(server.clients_pending_iter))) {
+    listRewind(server.clients_pending_write,&li);
+    while((ln = listNext(&li))) {
         client *c = listNodeValue(ln);
 
         /* Install the write handler if there are pending writes in some
@@ -3679,14 +3679,14 @@ int handleClientsWithPendingReadsUsingThreads(void) {
     /* Atomicity sets the number of worker threads, and the main thread and
      * I/O threads are notified when they have finished their work. */
     atomicSet(server.io_threads_in_working, server.io_threads_num);
+    server.clients_pending_iter = listGetIterator(server.clients_pending_read, AL_START_HEAD);
     io_threads_op = IO_THREADS_OP_READ;
     for (int j = 1; j < server.io_threads_num; j++) {
-        setIOWorkingStatusIn(j);
+        setIOWorkingStatus(j, IO_THREADS_START_WORKING);
     }
 
     /* Also use the main thread to Competition processing clients tasks. */
     listNode *ln;
-    listRewind(server.clients_pending_read,server.clients_pending_iter);
     while((ln = listConcurrentNext(server.clients_pending_iter, server.clients_pending_spinlock))) {
         client *c = listNodeValue(ln);
         readQueryFromClient(c->conn);
@@ -3699,6 +3699,7 @@ int handleClientsWithPendingReadsUsingThreads(void) {
         atomicGet(server.io_threads_in_working, pending);
         if (pending == 0) break;
     }
+    listReleaseIterator(server.clients_pending_iter);
 
     /* Run the list of clients again to process the new buffers. */
     while(listLength(server.clients_pending_read)) {
