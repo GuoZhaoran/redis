@@ -3562,18 +3562,24 @@ void stopThreadedIO(void) {
 
 /* This function checks if there are not enough pending clients to justify
  * taking the I/O threads active: in that case I/O threads are stopped if
- * currently active. We track the pending writes as a measure of clients
- * we need to handle in parallel, however the I/O threading is disabled
- * globally for reads as well if we have too little pending clients.
+ * currently active. We track the pending writes and pending reads as measure
+ * of client we need to handle in parallel. When this function is called in
+ * serverCron(), the pending writes are not enough clients most of the time,
+ * at this point we should judge pending reads for it may generate the same
+ * pending writes soon.
  *
  * The function returns 0 if the I/O threading should be used because there
  * are enough active threads, otherwise 1 is returned and the I/O threads
  * could be possibly stopped (if already active) as a side effect. */
 int stopThreadedIOIfNeeded(void) {
-    int pending = listLength(server.clients_pending_write);
-
     /* Return ASAP if IO threads are disabled (single threaded mode). */
     if (server.io_threads_num == 1) return 1;
+
+    /* Compare to pending writes and pending reads, take the maximum value. */
+    int pending_writes = listLength(server.clients_pending_write),
+        pending_reads = listLength(server.clients_pending_read),
+        pending;
+    pending = pending_writes > pending_reads ? pending_writes : pending_reads;
 
     if (pending < (server.io_threads_num*2)) {
         if (server.io_threads_active) stopThreadedIO();
