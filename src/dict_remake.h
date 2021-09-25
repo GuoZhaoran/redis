@@ -81,19 +81,42 @@ typedef struct dictRemakeType {
 struct dictRemake {
     dictRemakeType *type;
 
-    dictRemakeEntry **ht_table[2];
+    /* Logically, dict expansion can always be seen as having two tables in use.
+     *
+     * Case one: at the beginning when dict does not reach the maximum table capacity
+     * that can be used, these two tables are real (one of them is used for expansion).
+     *
+     * Case two: When the table capacity needed by dict exceeds the maximum table
+     * capacity that can be used, we will allocate multiple (a power of two) maximum
+     * tables to meet the capacity of dict, at this time we can treat the first half (or
+     * the first part) of the table as a small table, and treat all the tables as one
+     * big table, logically, the same as case 1, It's just that we don't use tables with
+     * larger capacities anymore, because this leads to redundant memory allocations (and
+     * the allocation itself is a burden when we need tables with very large capacities)
+     * */
     unsigned long ht_used[2];
 
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
 
-    /* Keep small vars at end for optimal (minimal) struct padding */
+    /* maximum number of tables used, when our dictionary reaches the maximum table
+     * capacity that can be used and still needs to be expanded, we will use multiple
+     * (a power of two) maximum tables in series to replace a large table. */
+    uint32_t maximum_table_used;
+
     int16_t pauserehash; /* If >0 rehashing is paused (<0 indicates coding error) */
     signed char ht_size_exp[2]; /* exponent of size. (size = 1<<exp) */
+
+    /* the number of tables we use is dynamically changing. */
+    dictRemakeEntry **ht_table[];
 };
 
 /* This is the initial size of every hash table */
 #define DICTREMAKE_HT_INITIAL_EXP      2
 #define DICTREMAKE_HT_INITIAL_SIZE     (1<<(DICTREMAKE_HT_INITIAL_EXP))
+
+/* This is the defined of maximum capacity of the hashtable can use table */
+#define DICTREMARK_HT_MAX_CAPACITY_EXP      12
+#define DICTREMARK_HT_MAX_CAPACITY_SIZE     (1<<(DICTREMARK_HT_MAX_CAPACITY_EXP))
 
 /* ------------------------------- Macros ------------------------------------*/
 #define dictRemakeFreeVal(d, entry) \

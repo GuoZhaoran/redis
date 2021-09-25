@@ -107,7 +107,7 @@ static void _dictRemakeReset(dictRemake *d, int htidx)
 /* Create a new hash table */
 dictRemake *dictRemakeCreate(dictRemakeType *type)
 {
-    dictRemake *d = zmalloc(sizeof(*d));
+    dictRemake *d = zmalloc(sizeof(*d) + 2 * sizeof(dictRemakeEntry**));
 
     _dictRemakeInit(d,type);
     return d;
@@ -121,6 +121,7 @@ int _dictRemakeInit(dictRemake *d, dictRemakeType *type)
     d->type = type;
     d->rehashidx = -1;
     d->pauserehash = 0;
+    d->maximum_table_used = 0;
     return DICTREMAKE_OK;
 }
 
