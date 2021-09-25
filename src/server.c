@@ -6282,6 +6282,7 @@ struct redisTest {
     {"zmalloc", zmalloc_test},
     {"sds", sdsTest},
     {"dict", dictTest},
+    {"dict_remake", dictRemakeTest},
     {"listpack", listpackTest}
 };
 redisTestProc *getTestProcByName(const char *name) {
