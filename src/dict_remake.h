@@ -91,22 +91,6 @@ struct dictRemake {
     signed char ht_size_exp[2]; /* exponent of size. (size = 1<<exp) */
 };
 
-/* If safe is set to 1 this is a safe iterator, that means, you can call
- * dictRemakeAdd, dictRemakeFind, and other functions against the dictRemakeionary even while
- * iterating. Otherwise it is a non safe iterator, and only dictRemakeNext()
- * should be called while iterating. */
-typedef struct dictRemakeIterator {
-    dictRemake *d;
-    long index;
-    int table, safe;
-    dictRemakeEntry *entry, *nextEntry;
-    /* unsafe iterator fingerprint for misuse detection. */
-    long long fingerprint;
-} dictRemakeIterator;
-
-typedef void (dictRemakeScanFunction)(void *privdata, const dictRemakeEntry *de);
-typedef void (dictRemakeScanBucketFunction)(dictRemake *d, dictRemakeEntry **bucketref);
-
 /* This is the initial size of every hash table */
 #define DICTREMAKE_HT_INITIAL_EXP      2
 #define DICTREMAKE_HT_INITIAL_SIZE     (1<<(DICTREMAKE_HT_INITIAL_EXP))
@@ -122,15 +106,6 @@ typedef void (dictRemakeScanBucketFunction)(dictRemake *d, dictRemakeEntry **buc
     else \
         (entry)->v.val = (_val_); \
 } while(0)
-
-#define dictRemakeSetSignedIntegerVal(entry, _val_) \
-    do { (entry)->v.s64 = _val_; } while(0)
-
-#define dictRemakeSetUnsignedIntegerVal(entry, _val_) \
-    do { (entry)->v.u64 = _val_; } while(0)
-
-#define dictRemakeSetDoubleVal(entry, _val_) \
-    do { (entry)->v.d = _val_; } while(0)
 
 #define dictRemakeFreeKey(d, entry) \
     if ((d)->type->keyDestructor) \
@@ -155,14 +130,9 @@ typedef void (dictRemakeScanBucketFunction)(dictRemake *d, dictRemakeEntry **buc
 #define dictRemakeHashKey(d, key) (d)->type->hashFunction(key)
 #define dictRemakeGetKey(he) ((he)->key)
 #define dictRemakeGetVal(he) ((he)->v.val)
-#define dictRemakeGetSignedIntegerVal(he) ((he)->v.s64)
-#define dictRemakeGetUnsignedIntegerVal(he) ((he)->v.u64)
-#define dictRemakeGetDoubleVal(he) ((he)->v.d)
 #define dictRemakeSlots(d) (DICTREMAKE_HT_SIZE((d)->ht_size_exp[0])+DICTREMAKE_HT_SIZE((d)->ht_size_exp[1]))
 #define dictRemakeSize(d) ((d)->ht_used[0]+(d)->ht_used[1])
 #define dictRemakeIsRehashing(d) ((d)->rehashidx != -1)
-#define dictRemakePauseRehashing(d) (d)->pauserehash++
-#define dictRemakeResumeRehashing(d) (d)->pauserehash--
 
 /* If our unsigned long type can store a 64 bit number, use a 64 bit PRNG. */
 #if ULONG_MAX >= 0xffffffffffffffff
@@ -177,22 +147,13 @@ int dictRemakeExpand(dictRemake *d, unsigned long size);
 int dictRemakeTryExpand(dictRemake *d, unsigned long size);
 int dictRemakeAdd(dictRemake *d, void *key, void *val);
 dictRemakeEntry *dictRemakeAddRaw(dictRemake *d, void *key, dictRemakeEntry **existing);
-dictRemakeEntry *dictRemakeAddOrFind(dictRemake *d, void *key);
-int dictRemakeReplace(dictRemake *d, void *key, void *val);
 int dictRemakeDelete(dictRemake *d, const void *key);
 dictRemakeEntry *dictRemakeUnlink(dictRemake *d, const void *key);
 void dictRemakeFreeUnlinkedEntry(dictRemake *d, dictRemakeEntry *he);
 void dictRemakeRelease(dictRemake *d);
 dictRemakeEntry * dictRemakeFind(dictRemake *d, const void *key);
-void *dictRemakeFetchValue(dictRemake *d, const void *key);
 int dictRemakeResize(dictRemake *d);
-dictRemakeIterator *dictRemakeGetIterator(dictRemake *d);
-dictRemakeIterator *dictRemakeGetSafeIterator(dictRemake *d);
-dictRemakeEntry *dictRemakeNext(dictRemakeIterator *iter);
-void dictRemakeReleaseIterator(dictRemakeIterator *iter);
 dictRemakeEntry *dictRemakeGetRandomKey(dictRemake *d);
-dictRemakeEntry *dictRemakeGetFairRandomKey(dictRemake *d);
-unsigned int dictRemakeGetSomeKeys(dictRemake *d, dictRemakeEntry **des, unsigned int count);
 void dictRemakeGetStats(char *buf, size_t bufsize, dictRemake *d);
 uint64_t dictRemakeGenHashFunction(const void *key, int len);
 uint64_t dictRemakeGenCaseHashFunction(const unsigned char *buf, int len);
@@ -203,9 +164,7 @@ int dictRemakeRehash(dictRemake *d, int n);
 int dictRemakeRehashMilliseconds(dictRemake *d, int ms);
 void dictRemakeSetHashFunctionSeed(uint8_t *seed);
 uint8_t *dictRemakeGetHashFunctionSeed(void);
-unsigned long dictRemakeScan(dictRemake *d, unsigned long v, dictRemakeScanFunction *fn, dictRemakeScanBucketFunction *bucketfn, void *privdata);
 uint64_t dictRemakeGetHash(dictRemake *d, const void *key);
-dictRemakeEntry **dictRemakeFindEntryRefByPtrAndHash(dictRemake *d, const void *oldptr, uint64_t hash);
 
 #ifdef REDIS_TEST
 int dictRemakeTest(int argc, char *argv[], int accurate);
