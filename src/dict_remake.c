@@ -490,44 +490,6 @@ dictRemakeEntry *dictRemakeFind(dictRemake *d, const void *key)
     return NULL;
 }
 
-/* A fingerprint is a 64 bit number that represents the state of the dictRemakeionary
- * at a given time, it's just a few dictRemake properties xored together.
- * When an unsafe iterator is initialized, we get the dictRemake fingerprint, and check
- * the fingerprint again when the iterator is released.
- * If the two fingerprints are different it means that the user of the iterator
- * performed forbidden operations against the dictRemakeionary while iterating. */
-long long dictRemakeFingerprint(dictRemake *d) {
-    long long integers[6], hash = 0;
-    int j;
-
-    integers[0] = (long) d->ht_table[0];
-    integers[1] = d->ht_size_exp[0];
-    integers[2] = d->ht_used[0];
-    integers[3] = (long) d->ht_table[1];
-    integers[4] = d->ht_size_exp[1];
-    integers[5] = d->ht_used[1];
-
-    /* We hash N integers by summing every successive integer with the integer
-     * hashing of the previous sum. Basically:
-     *
-     * Result = hash(hash(hash(int1)+int2)+int3) ...
-     *
-     * This way the same set of integers in a different order will (likely) hash
-     * to a different number. */
-    for (j = 0; j < 6; j++) {
-        hash += integers[j];
-        /* For the hashing step we use Tomas Wang's 64 bit integer hash. */
-        hash = (~hash) + (hash << 21); // hash = (hash << 21) - hash - 1;
-        hash = hash ^ (hash >> 24);
-        hash = (hash + (hash << 3)) + (hash << 8); // hash * 265
-        hash = hash ^ (hash >> 14);
-        hash = (hash + (hash << 2)) + (hash << 4); // hash * 21
-        hash = hash ^ (hash >> 28);
-        hash = hash + (hash << 31);
-    }
-    return hash;
-}
-
 /* ------------------------- private functions ------------------------------ */
 
 /* Because we may need to allocate huge memory chunk at once when dictRemake
