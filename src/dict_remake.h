@@ -176,7 +176,6 @@ void dictRemakeFreeUnlinkedEntry(dictRemake *d, dictRemakeEntry *he);
 void dictRemakeRelease(dictRemake *d);
 dictRemakeEntry * dictRemakeFind(dictRemake *d, const void *key);
 int dictRemakeResize(dictRemake *d);
-dictRemakeEntry *dictRemakeGetRandomKey(dictRemake *d);
 void dictRemakeGetStats(char *buf, size_t bufsize, dictRemake *d);
 uint64_t dictRemakeGenHashFunction(const void *key, int len);
 uint64_t dictRemakeGenCaseHashFunction(const unsigned char *buf, int len);

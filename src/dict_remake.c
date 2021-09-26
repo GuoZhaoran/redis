@@ -289,7 +289,7 @@ int dictRemakeRehashMilliseconds(dictRemake *d, int ms) {
  * some element can be missed or duplicated.
  *
  * This function is called by common lookup or update operations in the
- * dictRemakeionary so that the hash table automatically migrates from H1 to H2
+ * dictionary so that the hash table automatically migrates from H1 to H2
  * while it is actively used. */
 static void _dictRemakeRehashStep(dictRemake *d) {
     if (d->pauserehash == 0) dictRemakeRehash(d,1);
@@ -526,48 +526,6 @@ long long dictRemakeFingerprint(dictRemake *d) {
         hash = hash + (hash << 31);
     }
     return hash;
-}
-
-/* Return a random entry from the hash table. Useful to
- * implement randomized algorithms */
-dictRemakeEntry *dictRemakeGetRandomKey(dictRemake *d)
-{
-    dictRemakeEntry *he, *orighe;
-    unsigned long h;
-    int listlen, listele;
-
-    if (dictRemakeSize(d) == 0) return NULL;
-    if (dictRemakeIsRehashing(d)) _dictRemakeRehashStep(d);
-    if (dictRemakeIsRehashing(d)) {
-        unsigned long s0 = DICTREMAKE_HT_SIZE(d->ht_size_exp[0]);
-        do {
-            /* We are sure there are no elements in indexes from 0
-             * to rehashidx-1 */
-            h = d->rehashidx + (randomULong() % (dictRemakeSlots(d) - d->rehashidx));
-            he = (h >= s0) ? d->ht_table[1][h - s0] : d->ht_table[0][h];
-        } while(he == NULL);
-    } else {
-        unsigned long m = DICTREMAKE_HT_SIZE_MASK(d->ht_size_exp[0]);
-        do {
-            h = randomULong() & m;
-            he = d->ht_table[0][h];
-        } while(he == NULL);
-    }
-
-    /* Now we found a non empty bucket, but it is a linked
-     * list and we need to get a random element from the list.
-     * The only sane way to do so is counting the elements and
-     * select a random index. */
-    listlen = 0;
-    orighe = he;
-    while(he) {
-        he = he->next;
-        listlen++;
-    }
-    listele = random() % listlen;
-    he = orighe;
-    while(listele--) he = he->next;
-    return he;
 }
 
 /* ------------------------- private functions ------------------------------ */
@@ -860,12 +818,12 @@ int dictRemakeTest(int argc, char **argv, int accurate) {
     }
     end_benchmark("Random access of existing elements");
 
-    start_benchmark();
+    /*start_benchmark();
     for (j = 0; j < count; j++) {
         dictRemakeEntry *de = dictRemakeGetRandomKey(dictRemake);
         assert(de != NULL);
     }
-    end_benchmark("Accessing random keys");
+    end_benchmark("Accessing random keys");*/
 
     start_benchmark();
     for (j = 0; j < count; j++) {
